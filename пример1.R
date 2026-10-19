@@ -11,11 +11,43 @@ library(readxl)
 cat("Выберите Excel-файл со столбцом dt...\n")
 file_path <- file.choose()
 
-# Чтение Excel
-date <- read_excel(file_path, sheet = 1) #надо каждый раз указывать номер страницы
+# НАСТРОЙКИ ЗАГРУЗКИ
 
-# Первый столбец данных
-dt <- suppressWarnings(as.numeric(date[[1]]))
+sheet_number <- 1   # Номер листа Excel
+column_number <- 1  # Номер столбца с данными
+
+# Чтение Excel
+date <- read_excel(file_path, sheet = sheet_number)
+
+# ПРОВЕРКА ЗАГРУЖЕННОГО ФАЙЛА
+
+cat("\nВыбран лист №", sheet_number, "\n")
+
+cat("\nСтолбцы Excel:\n")
+for (j in 1:ncol(date)) {
+  cat(j, "-", names(date)[j], "\n")
+}
+
+cat("\nПервые 10 строк Excel:\n")
+print(head(date, 10))
+
+# Проверка номера столбца
+if (column_number < 1 || column_number > ncol(date)) {
+  stop("Неверный номер столбца Excel")
+}
+
+# Первый выбранный столбец данных
+dt_text <- as.character(date[[column_number]])
+
+# Замена десятичной запятой на точку
+dt_text <- gsub(",", ".", dt_text, fixed = TRUE)
+
+# Преобразование в числа
+dt <- suppressWarnings(as.numeric(dt_text))
+
+# Проверка количества распознанных чисел
+cat("\nВсего строк в столбце =", length(dt), "\n")
+cat("Распознано чисел =", sum(!is.na(dt)), "\n")
 
 # Удаление пропущенных значений
 dt <- dt[!is.na(dt)]
@@ -26,12 +58,29 @@ n <- length(dt)
 # ПРОВЕРКА ДАННЫХ
 
 if (n < 6 || any(!is.finite(dt))) {
-  stop("Нужно минимум 6 числовых наблюдений без бесконечных значений")
+  stop(paste(
+    "Распознано", n, "числовых наблюдений.",
+    "Нужно минимум 6.",
+    "Проверьте номер листа и столбца Excel."
+  ))
 }
 
-# ПОСТРОЕНИЕ ПРОГНОЗА (МЕТОД 1)
+# Проверка нулевых значений для MAPE
+if (any(dt[2:n] == 0)) {
+  stop("Нельзя вычислить MAPE: есть нулевые фактические значения")
+}
 
-ut <- rep(NA_real_, n) # выделяет место  для всех прогнозируемых значений
+cat("\nДанные успешно загружены!\n")
+cat("Количество наблюдений =", n, "\n")
+cat("Исходные значения:\n")
+print(dt)
+
+
+# МЕТОД 1. ПРОГНОЗ ПО ПРЕДЫДУЩЕМУ ЗНАЧЕНИЮ
+
+# ПОСТРОЕНИЕ ПРОГНОЗА
+
+ut <- rep(NA_real_, n)
 
 for (i in 2:n) {
   ut[i] <- dt[i-1]
@@ -55,30 +104,29 @@ MAE <- MAE / (n-1)
 MSE <- MSE / (n-1)
 RMSE <- sqrt(MSE)
 
-# MAPE не определён при нулевых значениях
+# Расчёт MAPE
 
-if (any(dt[-1] == 0)) {
-  MAPE <- NA_real_
-} else {
-  for (i in 2:n) {
-    MAPE <- MAPE + etm[i] / abs(dt[i])
-  }
-  MAPE <- MAPE / (n-1) * 100
+for (i in 2:n) {
+  MAPE <- MAPE + etm[i] / abs(dt[i])
 }
+
+MAPE <- MAPE / (n-1) * 100
 
 # ВЫВОД РЕЗУЛЬТАТОВ
 
+cat("\nМЕТОД 1\n")
 cat("Количество наблюдений =", n, "\n")
 cat("MAE =", MAE, "\n")
 cat("MAPE =", MAPE, "%\n")
 cat("MSE =", MSE, "\n")
 cat("RMSE =", RMSE, "\n")
 
-# Метод 2. Прогноз по среднему значению ряда
+
+# МЕТОД 2. ПРОГНОЗ ПО СРЕДНЕМУ ЗНАЧЕНИЮ
 
 # ПОСТРОЕНИЕ ПРОГНОЗА
 
-m <- mean(dt) # считайет среднее арифметическое dt
+m <- mean(dt)
 
 ut2 <- rep(NA_real_, n)
 
@@ -88,7 +136,7 @@ for (i in 2:n) {
 
 # РАСЧЁТ ОШИБОК
 
-et2 <- dt - ut2 # разность между фактическим и прогнозируемым значением
+et2 <- dt - ut2
 etm2 <- abs(et2)
 
 MAE2 <- 0
@@ -112,21 +160,22 @@ ut_next2 <- m
 
 # ВЫВОД РЕЗУЛЬТАТОВ
 
-cat("МЕТОД 2\n")
+cat("\nМЕТОД 2\n")
 cat("MAE =", MAE2, "\n")
 cat("MAPE =", MAPE2, "%\n")
 cat("MSE =", MSE2, "\n")
 cat("RMSE =", RMSE2, "\n")
 cat("Прогноз следующего значения =", ut_next2, "\n")
 
-# Метод 3. Скользящее среднее n = 2..5
+
+# МЕТОД 3. СКОЛЬЗЯЩЕЕ СРЕДНЕЕ (ОКНО 2..5)
 
 # ПОДБОР ЛУЧШЕГО ОКНА
 
 MAPE_best3 <- Inf
 window_best <- 2
 
-for (window in 2:5) { 
+for (window in 2:5) {
   
   ut_temp <- rep(NA_real_, n)
   
@@ -188,7 +237,7 @@ ut_next3 <- mean(dt[(n-window_best+1):n])
 
 # ВЫВОД РЕЗУЛЬТАТОВ
 
-cat("МЕТОД 3\n")
+cat("\nМЕТОД 3\n")
 cat("Лучшее окно =", window_best, "\n")
 cat("MAE =", MAE3, "\n")
 cat("MAPE =", MAPE3, "%\n")
@@ -196,14 +245,15 @@ cat("MSE =", MSE3, "\n")
 cat("RMSE =", RMSE3, "\n")
 cat("Прогноз следующего значения =", ut_next3, "\n")
 
-# Метод 4: Экспоненциальное сглаживание (подбор n)
+
+# МЕТОД 4. ЭКСПОНЕНЦИАЛЬНОЕ СГЛАЖИВАНИЕ
 
 # ПОДБОР ЛУЧШЕГО ПАРАМЕТРА
 
 MAPE_best4 <- Inf
 alpha_best4 <- 0
 
-for (j in 1:999) { #Программа проверяет 999 значений α, рассчитывает для каждого MAPE и выбирает то, у которого ошибка минимальная.
+for (j in 1:999) {
   
   alpha <- j / 1000
   
@@ -212,14 +262,16 @@ for (j in 1:999) { #Программа проверяет 999 значений �
   
   # Построение прогноза
   for (i in 2:n) {
-    ut_temp[i] <- alpha * dt[i-1] + (1-alpha) * ut_temp[i-1]
+    ut_temp[i] <- alpha * dt[i-1] +
+      (1-alpha) * ut_temp[i-1]
   }
   
   # Расчёт MAPE
   MAPE_temp <- 0
   
   for (i in 2:n) {
-    MAPE_temp <- MAPE_temp + abs(dt[i] - ut_temp[i]) / abs(dt[i])
+    MAPE_temp <- MAPE_temp +
+      abs(dt[i] - ut_temp[i]) / abs(dt[i])
   }
   
   MAPE_temp <- MAPE_temp / (n-1) * 100
@@ -268,7 +320,7 @@ ut_next4 <- alpha_best4 * dt[n] +
 
 # ВЫВОД РЕЗУЛЬТАТОВ
 
-cat("МЕТОД 4\n")
+cat("\nМЕТОД 4\n")
 cat("Лучший alpha =", alpha_best4, "\n")
 cat("MAE =", MAE4, "\n")
 cat("MAPE =", MAPE4, "%\n")
@@ -276,7 +328,8 @@ cat("MSE =", MSE4, "\n")
 cat("RMSE =", RMSE4, "\n")
 cat("Прогноз следующего значения =", ut_next4, "\n")
 
-# Метод 5. АДАПТИВНАЯ МОДЕЛЬ (подбор n, ut и bt)
+
+# МЕТОД 5. АДАПТИВНАЯ МОДЕЛЬ
 
 # ПОДБОР ЛУЧШЕГО ПАРАМЕТРА
 
@@ -299,9 +352,11 @@ for (j in 1:999) {
   # Построение модели
   for (i in 2:n) {
     
-    bt_temp[i] <- bt_temp[i-1] + et_temp[i-1] * (1-alpha)^2
+    bt_temp[i] <- bt_temp[i-1] +
+      et_temp[i-1] * (1-alpha)^2
     
-    ut_temp[i] <- ut_temp[i-1] + bt_temp[i-1] + (1-alpha^2) * et_temp[i-1]
+    ut_temp[i] <- ut_temp[i-1] + bt_temp[i-1] +
+      (1-alpha^2) * et_temp[i-1]
     
     et_temp[i] <- dt[i] - ut_temp[i]
   }
@@ -310,7 +365,8 @@ for (j in 1:999) {
   MAPE_temp <- 0
   
   for (i in 2:n) {
-    MAPE_temp <- MAPE_temp + abs(et_temp[i]) / abs(dt[i])
+    MAPE_temp <- MAPE_temp +
+      abs(et_temp[i]) / abs(dt[i])
   }
   
   MAPE_temp <- MAPE_temp / (n-1) * 100
@@ -334,9 +390,11 @@ et5[1] <- 0
 
 for (i in 2:n) {
   
-  bt5[i] <- bt5[i-1] + et5[i-1] * (1-alpha_best5)^2
+  bt5[i] <- bt5[i-1] +
+    et5[i-1] * (1-alpha_best5)^2
   
-  ut5[i] <- ut5[i-1] + bt5[i-1] + (1-alpha_best5^2) * et5[i-1]
+  ut5[i] <- ut5[i-1] + bt5[i-1] +
+    (1-alpha_best5^2) * et5[i-1]
   
   et5[i] <- dt[i] - ut5[i]
 }
@@ -362,17 +420,19 @@ RMSE5 <- sqrt(MSE5)
 
 # ПРОГНОЗ СЛЕДУЮЩЕГО ЗНАЧЕНИЯ
 
-ut_next5 <- ut5[n] + bt5[n] + (1-alpha_best5^2) * et5[n]
+ut_next5 <- ut5[n] + bt5[n] +
+  (1-alpha_best5^2) * et5[n]
 
 # ВЫВОД РЕЗУЛЬТАТОВ
 
-cat("МЕТОД 5\n")
+cat("\nМЕТОД 5\n")
 cat("Лучший alpha =", alpha_best5, "\n")
 cat("MAE =", MAE5, "\n")
 cat("MAPE =", MAPE5, "%\n")
 cat("MSE =", MSE5, "\n")
 cat("RMSE =", RMSE5, "\n")
 cat("Прогноз следующего значения =", ut_next5, "\n")
+
 
 # 6. СРАВНЕНИЕ ВСЕХ МЕТОДОВ
 
@@ -526,7 +586,6 @@ barplot(MAPE_all,
 
 # Линия минимальной ошибки
 abline(h = MAPE_best, col = "red", lty = 2)
-
 
 # Возвращаем режим одного графика
 par(mfrow = c(1, 1))
